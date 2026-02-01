@@ -33,27 +33,63 @@ class AudioCharacteristics:
 
 
 @dataclass
+class VoiceBreakdown:
+    """Detailed voice score breakdown."""
+    urgency: int        # 0-25: Pressure and time sensitivity in delivery
+    authority: int      # 0-25: Confidence and commanding presence
+    emotion: int        # 0-25: Emotional manipulation and expressiveness
+    pacing: int         # 0-25: Speed variation and dramatic timing
+    
+    @property
+    def total(self) -> int:
+        return self.urgency + self.authority + self.emotion + self.pacing
+
+
+@dataclass
+class BonusScores:
+    """Bonus point categories."""
+    improvisation: int  # 0-20: Added convincing details beyond script
+    accuracy: int       # 0-20: How closely followed the script
+    style: int          # 0-10: Accents, commitment, character
+    
+    @property
+    def total(self) -> int:
+        return self.improvisation + self.accuracy + self.style
+
+
+@dataclass
 class GameScore:
-    """Complete game score with breakdown."""
+    """Complete game score with detailed breakdown."""
+    # Main scores
     content_score: int  # 0-100
-    voice_score: int  # 0-100
-    total_score: int  # 0-200
+    voice_breakdown: VoiceBreakdown  # Detailed voice scores (max 100)
+    bonus_scores: BonusScores  # Bonus points (max 50)
+    
+    # Computed totals
+    voice_score: int  # Sum of voice breakdown (0-100)
+    bonus_total: int  # Sum of bonus scores (0-50)
+    total_score: int  # Grand total (0-250)
+    
+    # Feedback
     content_feedback: str
     voice_feedback: str
+    pro_tips: List[str]  # Specific improvement suggestions
+    
+    # Data
     transcript: str
     characteristics: AudioCharacteristics
     title: str  # Player ranking title
 
 
 def get_title_for_score(score: int) -> str:
-    """Get a fun title based on total score."""
-    if score <= 40:
+    """Get a fun title based on total score (now 0-250 scale)."""
+    if score <= 50:
         return "Honest Citizen"
-    elif score <= 80:
+    elif score <= 100:
         return "Suspicious Caller"
-    elif score <= 120:
+    elif score <= 150:
         return "Amateur Con Artist"
-    elif score <= 160:
+    elif score <= 200:
         return "Professional Grifter"
     else:
         return "Master Scammer"
@@ -149,11 +185,11 @@ def analyze_performance(
 ) -> dict:
     """
     Analyze the player's scam performance using GPT-4o.
-    Returns scores and feedback for the game.
+    Returns detailed scores, breakdown, and feedback for the game.
     """
     
     char_desc = f"""
-Voice Characteristics:
+Voice Characteristics (measured from audio):
 - Average Pitch: {characteristics.average_pitch:.2f} Hz
 - Pitch Variance: {characteristics.pitch_variance:.2f} (variation in tone)
 - Speaking Rate: {characteristics.speaking_rate:.2f} (energy changes per second)
@@ -178,35 +214,55 @@ Here's what they actually said (transcribed):
 
 {char_desc}
 
-Score their PERFORMANCE on two dimensions (0-100 each):
+Score their PERFORMANCE with detailed breakdown:
 
-1. **Content Score (0-100)**: How well did they deliver the scam script?
-   - Did they hit the key scam phrases and tactics?
-   - Did they add convincing improvisation?
-   - Did they maintain the scam's narrative?
+## 1. CONTENT SCORE (0-100)
+How well did they deliver the scam script content?
 
-2. **Voice Score (0-100)**: How convincing did they SOUND?
-   - Urgency and pressure in their voice
-   - Confidence and authority
-   - Emotional manipulation techniques
-   - Appropriate pacing and emphasis
-   - Voice characteristics that match a scammer (high energy, varied pitch for emphasis, etc.)
+## 2. VOICE BREAKDOWN (each 0-25, total 100)
+- **Urgency**: Pressure and time sensitivity in their delivery
+- **Authority**: Confidence and commanding presence
+- **Emotion**: Emotional manipulation and expressiveness
+- **Pacing**: Speed variation and dramatic timing
+
+## 3. BONUS SCORES
+- **Improvisation (0-20)**: Did they add convincing details beyond the script?
+- **Accuracy (0-20)**: How closely did they follow the original script?
+- **Style (0-10)**: Accents, character commitment, extra flair
+
+## 4. PRO TIPS
+Give 2-3 specific, actionable tips to improve their performance.
 
 Be generous but fair - this is a fun game! Give specific, entertaining feedback.
 
 Respond with a JSON object:
 {{
     "content_score": <0-100>,
-    "voice_score": <0-100>,
-    "content_feedback": "<2-3 sentences about their script delivery, be fun and specific>",
-    "voice_feedback": "<2-3 sentences about their vocal performance, be entertaining>"
+    "content_feedback": "<2-3 sentences about their script delivery>",
+    "voice_breakdown": {{
+        "urgency": <0-25>,
+        "authority": <0-25>,
+        "emotion": <0-25>,
+        "pacing": <0-25>
+    }},
+    "voice_feedback": "<2-3 sentences about their vocal performance>",
+    "bonus_scores": {{
+        "improvisation": <0-20>,
+        "accuracy": <0-20>,
+        "style": <0-10>
+    }},
+    "pro_tips": [
+        "<specific tip 1>",
+        "<specific tip 2>",
+        "<specific tip 3>"
+    ]
 }}
 """
     
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are a fun, entertaining game judge for Scam School. Give scores and playful feedback. Use humor!"},
+            {"role": "system", "content": "You are a fun, entertaining game judge for Scam School. Give detailed scores and playful feedback. Use humor! Always provide exactly 3 pro tips."},
             {"role": "user", "content": prompt}
         ],
         response_format={"type": "json_object"},
@@ -233,7 +289,7 @@ def process_audio_for_game(
         api_key: OpenAI API key
     
     Returns:
-        GameScore with all results
+        GameScore with all results including detailed breakdown
     """
     client = OpenAI(api_key=api_key)
     
@@ -252,21 +308,51 @@ def process_audio_for_game(
         # Step 2: Analyze voice characteristics
         characteristics = analyze_audio_characteristics(audio, sr)
         
-        # Step 3: Get GPT scoring
+        # Step 3: Get GPT scoring with detailed breakdown
         results = analyze_performance(
             client, transcript, characteristics, original_prompt, difficulty
         )
         
+        # Parse results
         content_score = int(results.get("content_score", 50))
-        voice_score = int(results.get("voice_score", 50))
-        total_score = content_score + voice_score
+        
+        # Voice breakdown
+        vb = results.get("voice_breakdown", {})
+        voice_breakdown = VoiceBreakdown(
+            urgency=int(vb.get("urgency", 12)),
+            authority=int(vb.get("authority", 12)),
+            emotion=int(vb.get("emotion", 12)),
+            pacing=int(vb.get("pacing", 12))
+        )
+        
+        # Bonus scores
+        bs = results.get("bonus_scores", {})
+        bonus_scores = BonusScores(
+            improvisation=int(bs.get("improvisation", 10)),
+            accuracy=int(bs.get("accuracy", 10)),
+            style=int(bs.get("style", 5))
+        )
+        
+        # Calculate totals
+        voice_score = voice_breakdown.total
+        bonus_total = bonus_scores.total
+        total_score = content_score + voice_score + bonus_total
+        
+        # Pro tips
+        pro_tips = results.get("pro_tips", ["Keep practicing!", "Try adding more emotion!", "Great start!"])
+        if not isinstance(pro_tips, list):
+            pro_tips = [pro_tips]
         
         return GameScore(
             content_score=content_score,
+            voice_breakdown=voice_breakdown,
+            bonus_scores=bonus_scores,
             voice_score=voice_score,
+            bonus_total=bonus_total,
             total_score=total_score,
             content_feedback=results.get("content_feedback", "Great attempt!"),
             voice_feedback=results.get("voice_feedback", "Nice vocal work!"),
+            pro_tips=pro_tips,
             transcript=transcript,
             characteristics=characteristics,
             title=get_title_for_score(total_score)
